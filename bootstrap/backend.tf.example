@@ -1,0 +1,10 @@
+# Copy this file to backend.tf only after the first bootstrap apply.
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "rg-tfstate-prod-westus2-001"
+    storage_account_name = "replacewithgloballyuniquename"
+    container_name       = "tfstate"
+    key                  = "bootstrap/prod/terraform.tfstate"
+    use_azuread_auth     = true
+  }
+}

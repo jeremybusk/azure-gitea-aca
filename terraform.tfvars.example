@@ -1,0 +1,18 @@
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+# location        = "westus2"
+# name_prefix     = "gitea"
+
+# The default scales to zero. Set to 1 only for an always-on server and expect
+# Container Apps compute charges beyond the subscription's monthly free grant.
+min_replicas = 0
+
+# Public registration is off by default. Create the first administrator using
+# the post-deployment command in README.md.
+disable_registration = true
+
+# Optional. A subdomain is easiest because it can use a CNAME to the ACA FQDN.
+# custom_domain = "git.example.com"
+# enable_custom_domain = false
+
+# Pin exact versions and review the Gitea upgrade notes before changing this.
+gitea_image = "docker.gitea.com/gitea:1.27.3"
