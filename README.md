@@ -72,8 +72,12 @@ export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv | tr -d '\r\n')"
 
 ## Deploy
 
-For the shortest path with no Terraform or GitHub setup, use the
-[ultra-simple Azure CLI Bash deployment](docs/az-cli-deploy.md).
+For the easiest guided path with no Terraform or GitHub setup, use the
+[Python deploy/destroy utility](docs/python-deploy.md). It creates the first
+administrator automatically and has deletion safeguards.
+
+For a copy-and-paste-only alternative, use the
+[Azure CLI Bash deployment](docs/az-cli-deploy.md).
 
 ### Terraform deployment
 

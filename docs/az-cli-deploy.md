@@ -1,5 +1,10 @@
 # Ultra-simple deployment with Azure CLI
 
+For a more guided experience that also creates the first administrator and
+can safely destroy the deployment, use the
+[Python deploy/destroy utility](python-deploy.md). This page remains the raw
+Bash alternative.
+
 This path skips Terraform, remote state, GitHub Actions, and custom domains.
 It creates the same small Gitea shape using Bash and Azure CLI:
 
