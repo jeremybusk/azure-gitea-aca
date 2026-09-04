@@ -72,6 +72,11 @@ export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv | tr -d '\r\n')"
 
 ## Deploy
 
+For the shortest path with no Terraform or GitHub setup, use the
+[ultra-simple Azure CLI Bash deployment](docs/az-cli-deploy.md).
+
+### Terraform deployment
+
 This repository is configured for an Azure Blob Terraform backend. If you do
 not already have one, follow [bootstrap/README.md](bootstrap/README.md) once.
 

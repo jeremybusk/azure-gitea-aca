@@ -11,13 +11,13 @@ variable "subscription_id" {
 variable "location" {
   description = "Azure region for the Terraform state resources."
   type        = string
-  default     = "westus2"
+  default     = "eastus2"
 }
 
 variable "resource_group_name" {
   description = "Resource group containing the Terraform state storage account."
   type        = string
-  default     = "rg-tfstate-prod-westus2-001"
+  default     = "rg-tfstate-prod-eastus2-001"
 }
 
 variable "storage_account_name" {
