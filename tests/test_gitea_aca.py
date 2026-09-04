@@ -55,13 +55,18 @@ class SpecTests(unittest.TestCase):
             secret["name"] for secret in properties["configuration"]["secrets"]
         }
         env_names = {entry["name"] for entry in container["env"]}
+        env_values = {entry["name"]: entry.get("value") for entry in container["env"]}
 
         self.assertEqual(container["resources"], {"cpu": 0.25, "memory": "0.5Gi"})
         self.assertEqual(properties["template"]["scale"]["maxReplicas"], 1)
         self.assertIn("gitea-admin-password", secret_names)
         self.assertIn("GITEA_ADMIN_PASSWORD", env_names)
+        self.assertEqual(env_values["GITEA__queue__TYPE"], "channel")
+        self.assertEqual(properties["configuration"]["activeRevisionsMode"], "Multiple")
         self.assertEqual(container["volumeMounts"][0]["mountPath"], "/data")
         self.assertIn("gitea admin user create", container["args"][2])
+        self.assertIn("gitea web", container["args"][2])
+        self.assertNotIn("s6-svscan", container["args"][2])
 
     def test_final_spec_removes_admin_bootstrap(self):
         spec = gitea_aca.build_app_spec(
@@ -84,7 +89,7 @@ class SpecTests(unittest.TestCase):
         )
         self.assertNotIn("GITEA_ADMIN_PASSWORD", env_names)
         self.assertEqual(container["command"], ["/usr/bin/entrypoint"])
-        self.assertEqual(container["args"], ["/usr/bin/s6-svscan", "/etc/s6"])
+        self.assertEqual(container["args"], ["/bin/bash", "/etc/s6/gitea/run"])
 
     def test_storage_name_is_valid_and_random(self):
         first = gitea_aca.generate_storage_name()

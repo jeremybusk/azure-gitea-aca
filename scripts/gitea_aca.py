@@ -317,6 +317,9 @@ def base_environment(root_url: str) -> list[dict[str, str]]:
         },
         {"name": "GITEA__database__DB_TYPE", "value": "sqlite3"},
         {"name": "GITEA__database__SQLITE_JOURNAL_MODE", "value": "DELETE"},
+        # LevelDB queue files are not safe on an SMB share and can be
+        # corrupted if Container Apps briefly overlaps two revisions.
+        {"name": "GITEA__queue__TYPE", "value": "channel"},
     ]
 
 
@@ -334,7 +337,7 @@ if [ ! -f /data/gitea/.initial-admin-created ]; then
     --must-change-password=true
   touch /data/gitea/.initial-admin-created
 fi
-exec /usr/bin/s6-svscan /etc/s6
+exec su-exec git /usr/local/bin/gitea web
 """
 
 
@@ -376,10 +379,11 @@ def build_app_spec(
     else:
         # Keep the password secret until this replacement revision is healthy:
         # the outgoing revision still references it during the transition.
-        # Spell out the image defaults because empty command/args arrays have
-        # inconsistent clearing semantics in Container Apps updates.
+        # Run only Gitea's web service. The rootful image's default s6 process
+        # also starts sshd on port 22, which can make Container Apps reject the
+        # revision because ingress intentionally targets port 3000.
         container["command"] = ["/usr/bin/entrypoint"]
-        container["args"] = ["/usr/bin/s6-svscan", "/etc/s6"]
+        container["args"] = ["/bin/bash", "/etc/s6/gitea/run"]
 
     return {
         "location": config.location,
@@ -388,7 +392,9 @@ def build_app_spec(
         "properties": {
             "managedEnvironmentId": environment_id,
             "configuration": {
-                "activeRevisionsMode": "Single",
+            # Deployment explicitly stops the bootstrap revision before
+            # starting the final revision because both use one SQLite volume.
+            "activeRevisionsMode": "Multiple",
                 "secrets": secrets_list,
                 "ingress": {
                     "external": True,
@@ -753,6 +759,37 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     print(f"  Temporary password: {admin_password}")
 
     print("[7/8] Removing the one-time administrator bootstrap...")
+    app = cli.json(
+        [
+            "containerapp",
+            "show",
+            "--name",
+            config.app_name,
+            "--resource-group",
+            config.resource_group,
+        ]
+    )
+    bootstrap_revision = (app.get("properties") or {}).get("latestRevisionName")
+    if not bootstrap_revision:
+        raise DeploymentError("Unable to identify the bootstrap revision.")
+    # SQLite and its local queue files cannot safely be opened by overlapping
+    # Container Apps revisions on the same Azure Files share. Accept a short
+    # maintenance window between the bootstrap and final revisions.
+    cli.run(
+        [
+            "containerapp",
+            "revision",
+            "deactivate",
+            "--name",
+            config.app_name,
+            "--resource-group",
+            config.resource_group,
+            "--revision",
+            str(bootstrap_revision),
+            "--output",
+            "none",
+        ]
+    )
     final_spec = build_app_spec(
         config,
         environment_id,
@@ -776,6 +813,21 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
             config.resource_group,
             "--secret-names",
             "gitea-admin-password",
+            "--output",
+            "none",
+        ]
+    )
+    cli.run(
+        [
+            "containerapp",
+            "revision",
+            "set-mode",
+            "--name",
+            config.app_name,
+            "--resource-group",
+            config.resource_group,
+            "--mode",
+            "single",
             "--output",
             "none",
         ]
