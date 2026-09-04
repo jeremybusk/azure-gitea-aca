@@ -123,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Email address for the first Gitea administrator",
     )
     deploy.add_argument("--admin-username", default="admin")
-    deploy.add_argument("--location", default="westus2")
+    deploy.add_argument("--location", default="eastus2")
     deploy.add_argument("--resource-group", default="gitea-rg")
     deploy.add_argument("--environment", default="gitea-env")
     deploy.add_argument("--app-name", default="gitea-app")
@@ -272,6 +272,29 @@ def generate_storage_name() -> str:
     return f"gitea{secrets.token_hex(8)}"
 
 
+def enable_file_share_soft_delete(
+    cli: AzureCLI, resource_group: str, storage_account: str
+) -> None:
+    cli.run(
+        [
+            "storage",
+            "account",
+            "file-service-properties",
+            "update",
+            "--account-name",
+            storage_account,
+            "--resource-group",
+            resource_group,
+            "--enable-delete-retention",
+            "true",
+            "--delete-retention-days",
+            "7",
+            "--output",
+            "none",
+        ]
+    )
+
+
 def base_environment(root_url: str) -> list[dict[str, str]]:
     domain = root_url.removeprefix("https://").removesuffix("/")
     return [
@@ -321,10 +344,14 @@ def build_app_spec(
     root_url: str,
     gitea_secret: str,
     *,
-    admin_password: str | None,
+    admin_password: str,
+    bootstrap_admin: bool,
 ) -> dict[str, Any]:
     environment = base_environment(root_url)
-    secrets_list = [{"name": "gitea-secret-key", "value": gitea_secret}]
+    secrets_list = [
+        {"name": "gitea-secret-key", "value": gitea_secret},
+        {"name": "gitea-admin-password", "value": admin_password},
+    ]
     container: dict[str, Any] = {
         "name": "gitea",
         "image": config.image,
@@ -333,10 +360,7 @@ def build_app_spec(
         "volumeMounts": [{"volumeName": "gitea-data", "mountPath": "/data"}],
     }
 
-    if admin_password is not None:
-        secrets_list.append(
-            {"name": "gitea-admin-password", "value": admin_password}
-        )
+    if bootstrap_admin:
         environment.extend(
             [
                 {"name": "GITEA_ADMIN_USERNAME", "value": config.admin_username},
@@ -350,10 +374,12 @@ def build_app_spec(
         container["command"] = ["/usr/bin/entrypoint"]
         container["args"] = ["/bin/sh", "-c", bootstrap_command()]
     else:
-        # Explicit empty values clear the one-time bootstrap override and use
-        # the image's normal ENTRYPOINT/CMD for all subsequent starts.
-        container["command"] = []
-        container["args"] = []
+        # Keep the password secret until this replacement revision is healthy:
+        # the outgoing revision still references it during the transition.
+        # Spell out the image defaults because empty command/args arrays have
+        # inconsistent clearing semantics in Container Apps updates.
+        container["command"] = ["/usr/bin/entrypoint"]
+        container["args"] = ["/usr/bin/s6-svscan", "/etc/s6"]
 
     return {
         "location": config.location,
@@ -443,6 +469,30 @@ def wait_for_health(root_url: str, timeout_seconds: int = 420) -> None:
     raise DeploymentError(
         f"Gitea did not become healthy within {timeout_seconds} seconds. "
         "Inspect it with 'az containerapp logs show'."
+    )
+
+
+def wait_for_latest_revision(cli: AzureCLI, config: DeployConfig) -> None:
+    deadline = time.monotonic() + 420
+    while time.monotonic() < deadline:
+        app = cli.json(
+            [
+                "containerapp",
+                "show",
+                "--name",
+                config.app_name,
+                "--resource-group",
+                config.resource_group,
+            ]
+        )
+        properties = app.get("properties") or {}
+        latest = properties.get("latestRevisionName")
+        if latest and properties.get("latestReadyRevisionName") == latest:
+            return
+        time.sleep(5)
+    raise DeploymentError(
+        "The replacement Container App revision did not become ready within "
+        "420 seconds. The previous revision and its bootstrap secret were retained."
     )
 
 
@@ -591,24 +641,7 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
             "none",
         ]
     )
-    cli.run(
-        [
-            "storage",
-            "account",
-            "file-service-properties",
-            "update",
-            "--name",
-            storage_account,
-            "--resource-group",
-            config.resource_group,
-            "--enable-delete-retention",
-            "true",
-            "--delete-retention-days",
-            "7",
-            "--output",
-            "none",
-        ]
-    )
+    enable_file_share_soft_delete(cli, config.resource_group, storage_account)
 
     print("[4/8] Creating the Consumption-only Container Apps environment...")
     if not cli.resource_exists(
@@ -708,6 +741,7 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
         root_url,
         gitea_secret,
         admin_password=admin_password,
+        bootstrap_admin=True,
     )
     apply_app_spec(cli, config, bootstrap_spec, create=True)
     print("      Waiting for Gitea", end="", flush=True)
@@ -724,10 +758,12 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
         environment_id,
         root_url,
         gitea_secret,
-        admin_password=None,
+        admin_password=admin_password,
+        bootstrap_admin=False,
     )
     apply_app_spec(cli, config, final_spec, create=False)
     print("      Waiting for the final revision", end="", flush=True)
+    wait_for_latest_revision(cli, config)
     wait_for_health(root_url)
     cli.run(
         [

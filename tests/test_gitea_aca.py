@@ -47,6 +47,7 @@ class SpecTests(unittest.TestCase):
             "https://gitea.example.test/",
             "secret-key",
             admin_password="temporary-password",
+            bootstrap_admin=True,
         )
         properties = spec["properties"]
         container = properties["template"]["containers"][0]
@@ -68,7 +69,8 @@ class SpecTests(unittest.TestCase):
             "/subscriptions/example/environments/gitea-env",
             "https://gitea.example.test/",
             "secret-key",
-            admin_password=None,
+            admin_password="temporary-password",
+            bootstrap_admin=False,
         )
         properties = spec["properties"]
         container = properties["template"]["containers"][0]
@@ -77,16 +79,46 @@ class SpecTests(unittest.TestCase):
         }
         env_names = {entry["name"] for entry in container["env"]}
 
-        self.assertEqual(secret_names, {"gitea-secret-key"})
+        self.assertEqual(
+            secret_names, {"gitea-secret-key", "gitea-admin-password"}
+        )
         self.assertNotIn("GITEA_ADMIN_PASSWORD", env_names)
-        self.assertEqual(container["command"], [])
-        self.assertEqual(container["args"], [])
+        self.assertEqual(container["command"], ["/usr/bin/entrypoint"])
+        self.assertEqual(container["args"], ["/usr/bin/s6-svscan", "/etc/s6"])
 
     def test_storage_name_is_valid_and_random(self):
         first = gitea_aca.generate_storage_name()
         second = gitea_aca.generate_storage_name()
         self.assertRegex(first, gitea_aca.STORAGE_NAME_RE)
         self.assertNotEqual(first, second)
+
+    def test_file_service_configuration_uses_account_name_option(self):
+        class RecordingCLI:
+            def __init__(self):
+                self.arguments = None
+
+            def run(self, arguments):
+                self.arguments = arguments
+
+        cli = RecordingCLI()
+        gitea_aca.enable_file_share_soft_delete(cli, "gitea-rg", "gitea123")
+
+        self.assertIn("--account-name", cli.arguments)
+        self.assertNotIn("--name", cli.arguments)
+        account_name_index = cli.arguments.index("--account-name") + 1
+        self.assertEqual(cli.arguments[account_name_index], "gitea123")
+
+    def test_revision_wait_requires_latest_revision_to_be_ready(self):
+        class RevisionCLI:
+            def json(self, arguments):
+                return {
+                    "properties": {
+                        "latestRevisionName": "gitea-app--new",
+                        "latestReadyRevisionName": "gitea-app--new",
+                    }
+                }
+
+        gitea_aca.wait_for_latest_revision(RevisionCLI(), self.config)
 
 
 if __name__ == "__main__":
