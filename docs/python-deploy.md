@@ -4,8 +4,9 @@ The included Python utility creates a small Gitea server and its first
 administrator, or removes the entire deployment later. It uses Azure CLI and
 Python's standard library, so there are no Python packages to install.
 
-This is the recommended path for someone who does not need Terraform, GitHub
-Actions, or a custom domain.
+This is the recommended path for someone who does not need Terraform or
+GitHub Actions. It supports an optional custom domain with a free
+Azure-managed TLS certificate.
 
 ## What it creates
 
@@ -62,7 +63,7 @@ When it finishes, the script prints:
 Save the password, sign in immediately, and replace it when Gitea asks. Public
 registration and SSH are disabled; use HTTPS URLs to clone and push.
 
-The defaults create `gitea-rg`, `gitea-env`, and `gitea-app` in `westus2`.
+The defaults create `gitea-rg`, `gitea-env`, and `gitea-app` in `eastus2`.
 For a different region or names, add options such as:
 
 ```bash
@@ -123,6 +124,19 @@ az containerapp hostname bind \
 Container Apps obtains and renews the free managed TLS certificate and
 terminates HTTPS at Azure ingress. Gitea continues serving HTTP on port 3000
 inside the environment; do not configure Gitea's own ACME server.
+
+For a concrete example using `jensgitea.uvoo.io`, deploy with:
+
+```bash
+python3 scripts/gitea_aca.py deploy \
+  --subscription "jens" \
+  --admin-email "jeremybusk@gmail.com" \
+  --custom-domain jensgitea.uvoo.io
+```
+
+Follow the DNS records and hostname-binding commands printed at the end of
+the deployment. Keep the validation TXT record in place so certificate
+renewal and domain-ownership validation continue to work.
 
 All deploy options are documented by the script:
 

@@ -4,7 +4,32 @@ Using the default `azurecontainerapps.io` hostname requires no action. These
 steps apply only when `custom_domain` is set, preferably to a subdomain such
 as `git.example.com`.
 
-## 1. Create the app and inspect the DNS values
+## Python deployment utility
+
+Provide the hostname on the initial deployment:
+
+```bash
+python3 scripts/gitea_aca.py deploy \
+  --subscription "<subscription name or ID>" \
+  --admin-email "<your email address>" \
+  --custom-domain git.example.com
+```
+
+The utility configures Gitea's canonical `ROOT_URL` and prints the exact CNAME,
+domain-validation TXT record, and `az containerapp hostname` commands after
+the app is created. The CNAME must point to the stable app hostname, such as
+`gitea-app.<environment-id>.<region>.azurecontainerapps.io`, and never to a
+revision hostname containing `--0000001` or another revision suffix.
+
+After creating the printed DNS records, wait for them to resolve and run the
+printed `hostname add` and `hostname bind` commands. Azure Container Apps
+issues and renews the free managed TLS certificate; Gitea itself remains on
+HTTP port 3000 behind Azure ingress. See the complete
+[Python instructions](python-deploy.md#use-a-custom-dns-name-and-managed-tls).
+
+## Terraform deployment
+
+### 1. Create the app and inspect the DNS values
 
 Set the hostname but leave its binding disabled, then apply once:
 
@@ -21,7 +46,7 @@ terraform output -json custom_domain_dns_records
 The sensitive output contains the stable ACA hostname, environment public IP,
 and domain-verification token.
 
-## 2. Create public DNS records
+### 2. Create public DNS records
 
 For a subdomain, create:
 
@@ -37,7 +62,7 @@ it prevents a dangling-domain takeover and may be needed for revalidation.
 Wait until public DNS returns both records. Then set
 `enable_custom_domain = true` and apply again to create the hostname binding.
 
-## 3. Issue and bind the free managed certificate
+### 3. Issue and bind the free managed certificate
 
 ```bash
 az containerapp hostname bind \
@@ -63,7 +88,7 @@ az containerapp hostname list \
 
 The binding type should become `SniEnabled`.
 
-## Changing an existing hostname
+### Changing an existing hostname
 
 Gitea persists its generated `app.ini` on Azure Files. Changing
 `custom_domain` after the first successful start creates a new ACA revision,

@@ -74,7 +74,8 @@ export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv | tr -d '\r\n')"
 
 For the easiest guided path with no Terraform or GitHub setup, use the
 [Python deploy/destroy utility](docs/python-deploy.md). It creates the first
-administrator automatically and has deletion safeguards.
+administrator automatically, supports `--custom-domain`, prints the required
+DNS and managed-certificate commands, and has deletion safeguards.
 
 For a copy-and-paste-only alternative, use the
 [Azure CLI Bash deployment](docs/az-cli-deploy.md).
@@ -138,8 +139,21 @@ terraform output -raw gitea_url
 ## Custom domain
 
 The free ACA hostname works without any DNS configuration. To use a custom
-hostname, set it before the first apply so Gitea writes the correct canonical
-URL:
+hostname with the Python utility, provide it during the first deployment:
+
+```bash
+python3 scripts/gitea_aca.py deploy \
+  --subscription "<subscription-name-or-id>" \
+  --admin-email "you@example.com" \
+  --custom-domain git.example.com
+```
+
+The utility prints the CNAME, validation TXT record, and Azure commands needed
+to obtain and bind the free managed TLS certificate. See the
+[Python deployment guide](docs/python-deploy.md#use-a-custom-dns-name-and-managed-tls).
+
+For Terraform, set the hostname before the first apply so Gitea writes the
+correct canonical URL:
 
 ```hcl
 custom_domain = "git.example.com"
