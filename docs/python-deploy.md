@@ -78,6 +78,52 @@ Use `--min-replicas 1` if you prefer no scale-to-zero cold start and accept
 the additional compute usage. Use `--yes` only when you intentionally want to
 skip the creation confirmation.
 
+## Use a custom DNS name and managed TLS
+
+Pass the intended canonical hostname during the first deployment so Gitea
+writes the correct `ROOT_URL` into its configuration:
+
+```bash
+python3 scripts/gitea_aca.py deploy \
+  --subscription "<subscription name or ID>" \
+  --admin-email "<your email address>" \
+  --custom-domain git.example.com
+```
+
+The script finishes creating Gitea through its Azure hostname, then prints the
+DNS records and Azure commands needed to bind the custom hostname. At your DNS
+provider, create:
+
+```text
+CNAME  git.example.com        -> gitea-app.<environment-id>.<region>.azurecontainerapps.io
+TXT    asuid.git.example.com  -> <verification ID printed by the script>
+```
+
+The CNAME must point directly to the stable app hostname (`gitea-app...`), not
+to a revision hostname such as `gitea-app--0000001...`. Revision hostnames
+change during deployments.
+
+After DNS propagates, run the commands printed by the script. They are
+equivalent to:
+
+```bash
+az containerapp hostname add \
+  --resource-group gitea-rg \
+  --name gitea-app \
+  --hostname git.example.com
+
+az containerapp hostname bind \
+  --resource-group gitea-rg \
+  --name gitea-app \
+  --environment gitea-env \
+  --hostname git.example.com \
+  --validation-method CNAME
+```
+
+Container Apps obtains and renews the free managed TLS certificate and
+terminates HTTPS at Azure ingress. Gitea continues serving HTTP on port 3000
+inside the environment; do not configure Gitea's own ACME server.
+
 All deploy options are documented by the script:
 
 ```bash
@@ -115,4 +161,3 @@ az containerapp logs show --resource-group gitea-rg --name gitea-app --follow
 
 If you do not need to preserve it, use the destroy command and deploy again.
 Do not manage the same resource group with both this script and Terraform.
-

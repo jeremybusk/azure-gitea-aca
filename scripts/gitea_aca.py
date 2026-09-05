@@ -47,6 +47,7 @@ class DeployConfig:
     storage_account: str | None
     admin_username: str
     admin_email: str
+    custom_domain: str | None
     min_replicas: int
     yes: bool
 
@@ -129,6 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument("--app-name", default="gitea-app")
     deploy.add_argument("--image", default=DEFAULT_IMAGE)
     deploy.add_argument(
+        "--custom-domain",
+        help="Canonical DNS hostname for Gitea, such as git.example.com",
+    )
+    deploy.add_argument(
         "--storage-account",
         help="Globally unique lowercase storage name; generated when omitted",
     )
@@ -202,6 +207,18 @@ def validate_deploy_config(config: DeployConfig) -> None:
         raise DeploymentError("--admin-username contains unsupported characters.")
     if not EMAIL_RE.fullmatch(config.admin_email):
         raise DeploymentError("--admin-email must look like a valid email address.")
+    if config.custom_domain and (
+        len(config.custom_domain) > 253
+        or not re.fullmatch(
+            r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+            r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?",
+            config.custom_domain,
+        )
+    ):
+        raise DeploymentError(
+            "--custom-domain must be a lowercase fully qualified hostname, "
+            "such as git.example.com."
+        )
     if not re.fullmatch(r"docker\.gitea\.com/gitea:\d+\.\d+\.\d+", config.image):
         raise DeploymentError(
             "--image must be an exact official Gitea tag, such as "
@@ -233,6 +250,8 @@ def confirm_deploy(config: DeployConfig, subscription_name: str) -> None:
     print(f"  Resource group: {config.resource_group}")
     print(f"  App:            {config.app_name}")
     print(f"  Administrator:  {config.admin_username} <{config.admin_email}>")
+    if config.custom_domain:
+        print(f"  Custom domain:  {config.custom_domain}")
     print(f"  Minimum replicas: {config.min_replicas}")
     print("  Persistent data: Standard LRS Azure Files (separately billed)\n")
     if config.yes:
@@ -502,6 +521,29 @@ def wait_for_latest_revision(cli: AzureCLI, config: DeployConfig) -> None:
     )
 
 
+def print_custom_domain_instructions(
+    config: DeployConfig, azure_fqdn: str, verification_id: str
+) -> None:
+    if not config.custom_domain:
+        return
+    hostname = config.custom_domain
+    print("\nFinish custom-domain setup after deployment:")
+    print("  Create these records with your DNS provider:")
+    print(f"    CNAME  {hostname}  ->  {azure_fqdn}")
+    print(f"    TXT    asuid.{hostname}  ->  {verification_id}")
+    print("  The CNAME must target the stable app hostname shown above, not a")
+    print("  revision hostname containing '--'. After DNS propagates, run:")
+    print(
+        f"    az containerapp hostname add --resource-group "
+        f"{config.resource_group} --name {config.app_name} --hostname {hostname}"
+    )
+    print(
+        f"    az containerapp hostname bind --resource-group "
+        f"{config.resource_group} --name {config.app_name} --environment "
+        f"{config.environment} --hostname {hostname} --validation-method CNAME"
+    )
+
+
 def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     validate_deploy_config(config)
     account = configure_account(cli, config.subscription)
@@ -736,7 +778,11 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     )
     environment_id = environment["id"]
     dns_suffix = environment["properties"]["defaultDomain"]
-    root_url = f"https://{config.app_name}.{dns_suffix}/"
+    azure_fqdn = f"{config.app_name}.{dns_suffix}"
+    azure_url = f"https://{azure_fqdn}/"
+    root_url = (
+        f"https://{config.custom_domain}/" if config.custom_domain else azure_url
+    )
     gitea_secret = secrets.token_hex(32)
     admin_password = secrets.token_urlsafe(24)
 
@@ -751,7 +797,7 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     )
     apply_app_spec(cli, config, bootstrap_spec, create=True)
     print("      Waiting for Gitea", end="", flush=True)
-    wait_for_health(root_url)
+    wait_for_health(azure_url)
 
     print("\nAdministrator created. Save these credentials now:")
     print(f"  Gitea URL:          {root_url}")
@@ -801,7 +847,7 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     apply_app_spec(cli, config, final_spec, create=False)
     print("      Waiting for the final revision", end="", flush=True)
     wait_for_latest_revision(cli, config)
-    wait_for_health(root_url)
+    wait_for_health(azure_url)
     cli.run(
         [
             "containerapp",
@@ -839,6 +885,24 @@ def deploy(cli: AzureCLI, config: DeployConfig) -> None:
     print(f"Temporary password: {admin_password}")
     print("\nSign in now. Gitea will require you to replace the temporary password.")
     print("Store repositories using HTTPS clone URLs; SSH is intentionally disabled.")
+    app = cli.json(
+        [
+            "containerapp",
+            "show",
+            "--name",
+            config.app_name,
+            "--resource-group",
+            config.resource_group,
+        ]
+    )
+    print_custom_domain_instructions(
+        config,
+        azure_fqdn,
+        str(
+            (app.get("properties") or {}).get("customDomainVerificationId")
+            or "<verification-id>"
+        ),
+    )
     print(
         "\nTo remove everything later:\n"
         f"  python3 scripts/gitea_aca.py destroy --subscription "
@@ -905,6 +969,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     storage_account=parsed.storage_account,
                     admin_username=parsed.admin_username,
                     admin_email=parsed.admin_email,
+                    custom_domain=parsed.custom_domain,
                     min_replicas=parsed.min_replicas,
                     yes=parsed.yes,
                 ),

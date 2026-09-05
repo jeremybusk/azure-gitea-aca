@@ -23,6 +23,20 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args(["destroy", "--subscription", "example"])
 
+    def test_deploy_accepts_custom_domain(self):
+        parsed = gitea_aca.build_parser().parse_args(
+            [
+                "deploy",
+                "--subscription",
+                "example",
+                "--admin-email",
+                "admin@example.com",
+                "--custom-domain",
+                "git.example.com",
+            ]
+        )
+        self.assertEqual(parsed.custom_domain, "git.example.com")
+
 
 class SpecTests(unittest.TestCase):
     def setUp(self):
@@ -36,6 +50,7 @@ class SpecTests(unittest.TestCase):
             storage_account=None,
             admin_username="admin",
             admin_email="admin@example.com",
+            custom_domain=None,
             min_replicas=0,
             yes=True,
         )
